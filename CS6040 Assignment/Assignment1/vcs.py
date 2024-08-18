@@ -48,7 +48,7 @@ def dijkstra(graph, start, end):
         path = path + [node]
         if node == end:
             return (cost, path)
-        for neighbor, weight in graph[node]:
+        for neighbor, weight in graph.get(node, []):
             if neighbor not in visited:
                 heapq.heappush(pq, (cost + weight, neighbor, path))
     return (float("inf"), [])
@@ -59,7 +59,10 @@ def build_graph(edges):
     for edge in edges:
         if edge.src not in graph:
             graph[edge.src] = []
+        if edge.dest not in graph:
+            graph[edge.dest] = []
         graph[edge.src].append((edge.dest, edge.delay))
+        graph[edge.dest].append((edge.src, edge.delay))  # Add this for bidirectional
     return graph
 
 # Function to find two link-disjoint shortest paths
@@ -80,19 +83,19 @@ def find_two_shortest_paths(graph, src, dest):
 # Function to check if the connection can be admitted
 def can_admit_connection(request, paths, edges):
     b_equiv = min(request.bimax, request.biave + 0.35 * (request.bimax - request.bimin))
+    
+    # Create a dictionary to easily access edge capacities
+    edge_dict = {(e.src, e.dest): e.capacity for e in edges}
+    
     for path_cost, path in paths:
         if path_cost == float("inf"):
             continue
         can_admit = True
         for i in range(len(path) - 1):
-            for edge in edges:
-                if edge.src == path[i] and edge.dest == path[i+1]:
-                    if b_equiv > edge.capacity:
-                        can_admit = False
-                        break
-                    edge.capacity -= b_equiv
-            if not can_admit:
-                break
+            if (path[i], path[i+1]) in edge_dict:
+                if b_equiv > edge_dict[(path[i], path[i+1])]:
+                    can_admit = False
+                    break
         if can_admit:
             return True, path
     return False, []
@@ -116,22 +119,24 @@ def process_virtual_circuit_switching(topology_file, connection_file):
             for i in range(len(path) - 1):
                 forwarding_table.append((path[i], path[i+1], vcid))
             paths_file.append((conn_id, request.src, request.dest, path, vcid))
-            routing_table.append((request.dest, path, sum([edges[i].delay for i in range(len(path) - 1)])))
+            routing_table.append((request.dest, path, sum([edge.delay for edge in edges if (edge.src, edge.dest) in zip(path[:-1], path[1:])])))
         else:
             print(f"Connection {conn_id} from {request.src} to {request.dest} could not be admitted.")
     
     # Output to files
     with open('RoutingTable.txt', 'w') as rt:
-        for entry in routing_table:
-            rt.write(f"{entry[0]} {entry[1]} {entry[2]}\n")
+        for dest, path, delay in routing_table:
+            rt.write(f"Dest: {dest}, Path: {' -> '.join(map(str, path))}, Path Delay: {delay}, Path Cost: {len(path) - 1}\n")
     
     with open('ForwardingTable.txt', 'w') as ft:
-        for entry in forwarding_table:
-            ft.write(f"{entry[0]} {entry[1]} {entry[2]}\n")
+        for src, dest, vcid in forwarding_table:
+            ft.write(f"{src} {dest} {vcid}\n")
     
     with open('Paths.txt', 'w') as pt:
-        for entry in paths_file:
-            pt.write(f"{entry[0]} {entry[1]} {entry[2]} {entry[3]} {entry[4]}\n")
+        pt.write(f"Total Requested Connections: {len(requests)}\n")
+        pt.write(f"Total Admitted Connections: {len(paths_file)}\n")
+        for conn_id, src, dest, path, vcid in sorted(paths_file):
+            pt.write(f"{conn_id} {src} {dest} {' -> '.join(map(str, path))} {vcid}\n")
 
 # Run the virtual circuit switching process with the input files
-process_virtual_circuit_switching('topology.txt', 'connection.txt')
+process_virtual_circuit_switching('topology.txt', 'connections.txt')
